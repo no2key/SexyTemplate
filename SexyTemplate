@@ -1,160 +1,392 @@
 <?php
+/**
+ * SexyTemplate
+ * a mini php template engine. just like artTemplate(JavaScript).
+ *
+ * @author qpwoeiru96 <qpwoeiru96@gmail.com>
+ * @version 0.0.2
+ */
 
-class SexyTemplate
+namespace SexyTemplate
 {
-    const T_FUNCTION_HEAD = 'extract($vars);unset($vars);$STR = ""; $STC = function($s) use(&$STR) { $STR .= $s;};';
-    const T_FUNCTION_END = 'unset($STC);return $STR;';
+    const VERSION = '0.0.2';
+
+    /**
+     * 函数包装头部 用于内部变量支持 以及初始化返回字符串
+     */
+    const T_FUNCTION_HEAD = 'extract($vars);unset($vars);$SEXY_TEMPLATE = "";';
+
+    /**
+     * 函数包装尾部
+     */
+    const T_FUNCTION_END = 'return $SEXY_TEMPLATE;';
+
+    /**
+     * 语句万能结尾
+     */
     const T_STATEMENT_END =  ";";
-    const T_COLLECT_HEAD_A = '$STC(';
-    const T_COLLECT_END_A = ');';
-    const T_COLLECT_HEAD_B = '$STV = ';
-    const T_COLLECT_END_B = ';$STC(htmlspecialchars($STV));unset($STV);';
 
     /**
-     * 是否验证模板的可用性 [建议在DBEUG阶段开启]
-     * @var boolean
+     * blabla
      */
-    public $validate = false;
-    public $printError = false;
+    const T_COLLECT_HEAD = '$SEXY_TEMPLATE .= ';
 
-    /**
-     * [parseStatement description]
-     * @param  [type] $statement [description]
-     * @return [type]            [description]
-     */
-    protected function parseStatement($statement)
+    class Compiler
     {
-        if($statement{0} == '=' && $statement{1} == '=') {
-            return self::T_COLLECT_HEAD_A . substr($statement, 2) . self::T_COLLECT_END_A;
-        } elseif ($statement{0} == '=') {
-            return self::T_COLLECT_HEAD_B . substr($statement, 1) . self::T_COLLECT_END_B;
-        } else {
-            return $statement . self::T_STATEMENT_END;
+        /**
+         * 语法分析钩子
+         * @var array
+         */
+        private $_statementParser = [];
+
+        /**
+         * 是否开启调试模式
+         * @var bool
+         */
+        public $debug = false;
+
+        public function __construct()
+        {
+            /**
+             * 用来支持 == 跟 = 输出/转义输出
+             */
+            $this->insertParser(
+                '#^(?<mark>={1,2}) *(?<statement>.*)#i',
+                function ($mark, $statement) {
+                    if ($mark === '==') {
+                        return '$SEXY_TEMPLATE .= ' . $statement;
+                    } else {
+                        return '$SEXY_TEMPLATE .= htmlspecialchars(' . $statement . ')';
+                    }
+                }
+            );
+
+            $varRe = '\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*';
+            $varMixRe = '\$[a-zA-Z_\x7f-\xff][^ ]*';
+            $stringRe = '(?<char>[\'"])([^\k<char>]+)\k<char>';
+
+            /**
+             * 支持 loop 语法
+             */
+            $this->insertParser(
+                "#^/loop$|^loop {1,}(?<array>{$varMixRe}) {1,}(?<key>{$varRe}) *(?<val>{$varRe})?#",
+                function ($array, $key, $val) {
+
+                    if (!$array) return "endforeach;";
+
+                    if ($val === null) {
+                        $val = $key;
+                        $key = null;
+                    }
+
+                    return $key ? "foreach({$array} as {$key} => {$val}):" : "foreach({$array} as {$val}):";
+                }
+            );
+
+            /**
+             * 支持 if 语法
+             */
+            $this->insertParser(
+                "#^/if|^if {1,}(?<statement>.+)#",
+                function ($statement) {
+
+                    return $statement ?
+                        "if ({$statement}):" :
+                        "endif;";
+                }
+            );
+
+            /**
+             * 支持 ?= 和 ?== 语法
+             */
+            $this->insertParser(
+                "#^\?(?<mark>={1,2}) *(?<first>{$varMixRe}?) *: *(?<second>{$varMixRe}|{$stringRe})#",
+                function ($mark, $first, $second) {
+                    if ($mark === '==') {
+                        return "\$SEXY_TEMPLATE .= ((isset({$first}) && {$first} !== null) ? {$first} : {$second});";
+                    } else {
+                        return "\$SEXY_TEMPLATE .= ((isset({$first}) && {$first} !== null) ? htmlspecialchars({$first}) : htmlspecialchars({$second}));";
+                    }
+                }
+            );
         }
-    }
 
-    /**
-     * [escapeString description]
-     * @param  [type] $str [description]
-     * @return [type]      [description]
-     */
-    protected function escapeNormalString($str)
-    {
-        return str_replace("'", "\\'", str_replace('\\', '\\\\', $str));
-    }
+        /**
+         * 插入语法分析钩子
+         *
+         * @param string $re 正则表达式
+         * @param callable $callback 调用函数
+         * @param bool $insertAtEnd 是否插入在最后面
+         */
+        public function insertParser($re, callable $callback, $insertAtEnd = false)
+        {
+            if ($insertAtEnd)
+                array_unshift($this->_statementParser, [$re, $callback]);
+            else
+                array_push($this->_statementParser, [$re, $callback]);
+        }
 
-    /**
-     * 收集正常输出的文本
-     * 
-     * @param  string $string 要输出的文本
-     * @return string
-     */
-    protected function collectString($string)
-    {
-        if($string === '') return '';
-        return self::T_COLLECT_HEAD_A . "'" . $this->escapeNormalString($string) . "'" . self::T_COLLECT_END_A;
-    }
+        /**
+         * 核心方法 用于分析语句
+         *
+         * @param  string $statement
+         * @return string
+         */
+        protected function parseStatement($statement)
+        {
+            foreach ($this->_statementParser as $parser) {
 
-    /**
-     * 编译模板
-     * 
-     * @param  string $template 模板字符串
-     * @return string 返回函数主体
-     */
-    private function _compile($template)
-    {
-        $length    = strlen($template);
-        $output  = array();
-        $inStatement = false;
-        $statement   = '';
+                list($re, $callback) = $parser;
 
-        $output[] = self::T_FUNCTION_HEAD;
+                if (preg_match($re, $statement, $matches)) {
 
-        for($i = 0; $i < $length; $i++) {
+                    $object = null;
 
-            $lastChar = $i > 0 ? $template{$i-1} : '';
-            $char     = $template{$i};
-            $nextChar = $length > $i + 1 ? $template{$i+1} : '';
-
-            switch ($char) {
-                case '<':
-                    if($nextChar == '%' && !$inStatement) {
-                        $output[] = $this->collectString($statement);
-                        $statement = '';
-                        $inStatement = true;
-                        $i++;                        
+                    //@todo: 处理静态方法
+                    if (is_array($callback)) {
+                        list($object, $method) = $callback;
+                        $ref = new \ReflectionMethod($object, $method);
                     } else {
-                        $statement .= $char;
-                    }                    
-                    break;         
-                case '%':
-                    if($nextChar == '>' && $inStatement) {
-                        $output[] = $this->parseStatement($statement);
-                        $statement = '';
-                        $inStatement = false;
-                        $i++;
+                        $ref = new \ReflectionFunction($callback);
+                    }
+
+                    $params = [];
+
+                    foreach ($ref->getParameters() as $param) {
+                        if ($param->name === 'matches') {
+                            $params[] = $matches;
+                        } else {
+                            $params[] = isset($matches[$param->name]) ? $matches[$param->name] : null;
+                        }
+                    }
+
+                    if (is_array($callback)) {
+                        return $ref->invokeArgs($object, $params) . T_STATEMENT_END;
                     } else {
-                        $statement .= $char;
+                        return $ref->invokeArgs($params) . T_STATEMENT_END;
                     }
-                    break;
-                default:
-                    $statement .= $char;
-                    if($i == $length - 1) {
-                        if($inStatement)
-                            $output[] = $this->parseStatement($statement);
-                        else
-                            $output[] = $this->collectString($statement);
-                    }
-                    break;
+                }
             }
-            
+
+            return $statement . T_STATEMENT_END;
         }
 
-        $output[] = self::T_FUNCTION_END;
+        /**
+         * 转义字符串
+         *
+         * @param  string $str 需要进行转义的字符串
+         * @return string
+         */
+        protected function escapeNormalString($str)
+        {
+            return str_replace(
+                ["\"", "\r", "\n"],
+                ["\\\"", "\\r", "\\n"],
+                str_replace('\\', '\\\\', $str)
+            );
+        }
 
-        return implode(PHP_EOL, $output);
+        /**
+         * 收集正常输出的文本
+         *
+         * @param  string $string 要输出的文本
+         * @return string
+         */
+        protected function collectString($string)
+        {
+            if ($string === '') return '';
+            return T_COLLECT_HEAD . "\"" . $this->escapeNormalString($string) . "\"" . T_STATEMENT_END;
+        }
+
+        public function compile($template)
+        {
+
+            $length = strlen($template);
+            $output = [];
+            $inStatement = false;
+            $buffer = '';
+
+            for ($i = 0; $i < $length; $i++) {
+
+                #$lastChar = $i > 0 ? $template{$i-1} : '';
+                $char = $template{$i};
+                $nextChar = $length > $i + 1 ? $template{$i + 1} : '';
+
+                switch ($char) {
+                    case '<':
+                        if ($nextChar == '%' && !$inStatement) {
+                            $output[] = $this->collectString($buffer);
+                            $buffer = '';
+                            $inStatement = true;
+                            $i++;
+                        } else {
+                            $buffer .= $char;
+                        }
+                        break;
+                    case '%':
+                        if ($nextChar == '>' && $inStatement) {
+                            $output[] = $this->parseStatement($buffer);
+                            $buffer = '';
+                            $inStatement = false;
+                            $i++;
+                        } else {
+                            $buffer .= $char;
+                        }
+                        break;
+                    default:
+                        $buffer .= $char;
+                        if ($i == $length - 1) {
+                            if ($inStatement)
+                                $output[] = $this->parseStatement($buffer);
+                            else
+                                $output[] = $this->collectString($buffer);
+                        }
+                        break;
+                }
+
+            }
+
+            $expression = implode("\n", $output);
+
+            if ($this->debug) {
+                $func = @create_function('', $expression);
+                if (!$func) {
+                    $error = error_get_last();
+                    ErrorPrinter::printError($error, $template, $expression);
+                    return false;
+                }
+            }
+
+            return new Wrapper($expression);
+        }
     }
 
-    /**
-     * 编译模板
-     * 
-     * @param  [type] $template [description]
-     * @param  boolean $returnBody 是否返回函数主体
-     * @return string|lambda 
-     */
-    public function compile($template, $returnBody = false)
+    class FileCompiler extends Compiler
     {
-        $funcBody = $this->_compile($template);
 
-        if($this->validate && !$this->validate($template, $funcBody))
-            throw new \Exception('template syntax error');
+        public $templateDir = null;
 
-        return $returnBody ? $funcBody : create_function('$vars', $funcBody);
+        public $templateExt = '.html';
+
+        public function __construct()
+        {
+            parent::__construct();
+
+            $this->init();
+        }
+
+        public function init()
+        {
+            $this->insertParser('#^include +([\'"])(?<file>[^\1]+)\1$#', array($this, 'parseInclude'));
+        }
+
+        /**
+         * 分析引用数据
+         *
+         * @param string $file 文件名称
+         * @param array $matches 匹配到的数据
+         * @return bool|\SexyTemplate\Wrapper
+         * @throws FileNotFoundException
+         */
+        public function parseInclude($file, $matches)
+        {
+            $filePath = $this->templateDir . DIRECTORY_SEPARATOR . $file . $this->templateExt;
+            $filePath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $filePath);
+
+            if(!file_exists($filePath)) {
+                $position = "<%$matches[0]%>";
+                throw new FileNotFoundException("template file '{$filePath}' is not found, pleast check at {$position}.");
+            }
+
+            return $this->compile(file_get_contents($filePath));
+        }
+
+        /**
+         * 编译文件
+         *
+         * @param string $file 文件名称
+         * @return bool|\SexyTemplate\Wrapper
+         * @throws FileNotFoundException
+         */
+        public function compileFile($file)
+        {
+            $filePath = $this->templateDir . DIRECTORY_SEPARATOR . $file . $this->templateExt;
+            $filePath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $filePath);
+
+            if(!file_exists($filePath)) {
+                throw new FileNotFoundException("template file '{$filePath}' is not found.");
+            }
+
+            return $this->compile(file_get_contents($filePath));
+        }
     }
 
-    private function validate($template, $body = null)
+    class FileNotFoundException extends \Exception
     {
-        if($body === null)
-            $body = $this->_compile($template);
 
-        $f = @create_function('$vars', $body);
-
-        if($f) return true;
-        elseif(!$this->printError) return false;
-
-        $error = error_get_last();
-
-        $this->_printError($error, $template, $body);
-
-        return false;
     }
 
-    private function _printError($error, $template, $body)
+    class Wrapper
     {
-        $body = '<?php ' . $body;
-        $template = htmlspecialchars($template);
-        $body = htmlspecialchars($body);
-        print <<<EOT
+        /**
+         * @var \Object
+         */
+        private $_ref         = null;
+
+        /**
+         * @var string
+         */
+        private $_expression = '';
+
+        public function __construct($expression)
+        {
+            $this->_expression = $expression;
+        }
+
+        /**
+         * 绑定环境
+         *
+         * @param \Object $obj
+         * @return $this
+         */
+        public function bind($obj)
+        {
+            $this->_ref = $obj;
+            return $this;
+        }
+
+        /**
+         * 渲染模板
+         *
+         * @param array $data
+         * @return string
+         */
+        public function render(array $data)
+        {
+            $func = create_function('$vars, $self', T_FUNCTION_HEAD . $this->_expression . T_FUNCTION_END);
+            $refFunc = new \ReflectionFunction($func);
+            return $refFunc->invoke($data, $this->_ref);
+        }
+
+        public function __invoke(array $data)
+        {
+            return $this->render($data);
+        }
+
+        public function __toString()
+        {
+            return $this->_expression;
+        }
+    }
+
+    class ErrorPrinter
+    {
+        static function printError($error, $template, $expression)
+        {
+            $error['message'] = htmlspecialchars($error['message']);
+            $template = htmlspecialchars($template);
+            $expression = htmlspecialchars($expression);
+            print <<<EOT
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -176,7 +408,7 @@ class SexyTemplate
             </div>
             <p>PHP代码:</p>
             <div class="right-side">
-                <pre class="code-block prettyprint linenums:1 lang-php">{$body}</pre>
+                <pre class="code-block prettyprint linenums:1 lang-php">&lt;?php {$expression}</pre>
             </div>
         </div>
     </div>
@@ -188,63 +420,7 @@ class SexyTemplate
 </body>
 </html>
 EOT;
-        exit(-1);
+            exit(-1);
+        }
     }
 }
-
-$s = new SexyTemplate();
-$s->validate = true;
-$s->printError = true;
-$t = <<<EOT
-        <div class="page">
-            <span class="page-info">
-                <a class="prev<%if (!\$hasPrev){%> prev-disabled<%}%>">
-                    <i>
-                    </i>
-                    上一页
-                </a>
-                <ul class="page-list">
-                    <%for (\$i = \$start; \$i <= \$end; \$i ++) {%>
-                    <li class="num min<%if (\$i == \$page) {%> cur<%}%>" data-page="<%==\$i%>">
-                        <a href="?page=<%=\$i%>"><%==\$i%></a>
-                    </li>
-                    <%}%>
-                    <li class="pagination-break">
-                        ...
-                    </li>
-                    <li class="num" data-page="<%==\$pageCount%>">
-                        <%==\$pageCount%>
-                    </li>
-                </ul>
-                <a class="next<%if (!\$hasNext){%> next-disabled<%}%>">
-                    下一页
-                    <i>
-                    </i>
-                </a>
-                <span class="page-sum">
-                    共<%==\$pageCount%>页
-                </span>
-            </span>
-            <span class="page-go">
-                <i class="fl">
-                    跳转
-                </i>
-                <input type="text fl">
-                <i class="fl">
-                    页
-                </i>
-            </span>
-            <a class="page-btn">
-                GO
-            </a>
-        </div>
-EOT;
-$f = $s->compile($t);
-print $f(array(
-    'page' => 1,
-    'hasPrev' => false,
-    'start' => 5,
-    'end' => 14,
-    'pageCount' => 34,
-    'hasNext' => true
-));
