@@ -1,0 +1,49 @@
+<!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Sexy Template</title>
+    <link rel="stylesheet" href="http://cdn.bootcss.com/bootstrap/3.3.0/css/bootstrap.min.css">
+    <style>
+    .CodeMirror {
+        font-family: Monaco, "Ubuntu Mono", Consolas !important;
+    }
+    .prettyprint{background:black;font-family:Menlo,'Bitstream Vera Sans Mono','DejaVu Sans Mono',Monaco,Consolas,monospace;font-size:12px;line-height:1.5;border:1px solid #ccc;padding:10px}.pln{color:white}@media screen{.str{color:#6f0}.kwd{color:#f60}.com{color:#93c}.typ{color:#458}.lit{color:#458}.pun{color:white}.opn{color:white}.clo{color:white}.tag{color:white}.atn{color:#9c9}.atv{color:#6f0}.dec{color:white}.var{color:white}.fun{color:#fc0}}@media print,projection{.str{color:#060}.kwd{color:#006;font-weight:bold}.com{color:#600;font-style:italic}.typ{color:#404;font-weight:bold}.lit{color:#044}.pun,.opn,.clo{color:#440}.tag{color:#006;font-weight:bold}.atn{color:#404}.atv{color:#060}}ol.linenums{margin-top:0;margin-bottom:0;color:white}a{color:gray;text-decoration:none}
+        ol.linenums .active {
+            cursor: pointer; background: #f30;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="row">
+            <div class="col-md-6">
+                <textarea name="editor" id="editor" cols="30" rows="10">&lt;%="hello world."%&gt;
+
+&lt;%loop $items $item%&gt;
+    &lt;%=$item-&gt;name%&gt;
+&lt;%/loop%&gt;
+
+&lt;%?== $data["name"] : "匿名"%&gt;
+
+&lt;%if $data%&gt;
+
+    &lt;%loop $data $index $item%&gt;
+        &lt;%==$index%&gt;: &lt;%=$item-&gt;name%&gt;
+    &lt;%/loop%&gt;
+
+&lt;%elseif $var%&gt;
+    &lt;%=$var%&gt;
+&lt;%else%&gt;
+    No Result
+&lt;%/if%&gt;</textarea>
+            <a href="#compile" class="btn btn-primary btn-xs-lg" id="compile-btn">编译</a>
+            </div>
+            <div class="col-md-6">
+                <pre id="expression" class="code-block prettyprint linenums:1 lang-php"></pre>
+            </div>
+        </div>
+    </div>
+</body>
+<%include 'js'%>
+</html>

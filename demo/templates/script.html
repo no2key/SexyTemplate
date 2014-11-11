@@ -1,0 +1,32 @@
+<script>
+    var mixedMode = {
+        name: "htmlmixed",
+        scriptTypes: [
+            {matches: /\/x-handlebars-template|\/x-mustache/i,mode: null},
+            {matches: /(text|application)\/(x-)?vb(a|script)/i,mode: "vbscript"}
+        ]
+    };
+    var editor = CodeMirror.fromTextArea(document.getElementById("editor"), {
+        mode: mixedMode, 
+        lineNumbers: true
+        //theme: 'solarized'
+    });
+
+    $("#compile-btn").click(function() {
+        $.ajax({
+            url: 'index.php',
+            data: {template: editor.getValue()},
+            dataType: 'json',
+            type: 'post',
+            success: function(data) {
+                $("#expression").text('<?php ' + data.expression).removeClass('prettyprinted');
+                //console.log(data);
+                prettyPrint();
+                if(data.error) {
+                    var e = $(".linenums").find('li').get(data.error.line - 1);       
+                    $(e).addClass('current active').attr('title', data.error.message);
+                }
+            }
+        });
+    });
+</script>
