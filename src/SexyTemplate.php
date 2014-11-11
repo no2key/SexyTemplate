@@ -47,68 +47,91 @@ namespace SexyTemplate
 
         public function __construct()
         {
-            /**
-             * 用来支持 == 跟 = 输出/转义输出
-             */
-            $this->insertParser(
-                '#^(?<mark>={1,2}) *(?<statement>.*)#i',
-                function ($mark, $statement) {
+            $this->init();
+        }
+
+        public function init()
+        {
+            
+        }
+
+        public static function getSyntaxMap()
+        {
+            $varRe = '\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*';
+            $varMixRe = '\$[a-zA-Z_\x7f-\xff][^ ]*';
+            $stringRe = '(?<char>[\'"])([^\k<char>]+)\k<char>';
+
+            return [
+                /**
+                 * 用来支持 == 跟 = 输出/转义输出
+                 */
+                "Print" => ['#^(?<mark>={1,2}) *(?<statement>.*)#i', function ($mark, $statement) {
                     if ($mark === '==') {
                         return '$SEXY_TEMPLATE .= ' . $statement;
                     } else {
                         return '$SEXY_TEMPLATE .= htmlspecialchars(' . $statement . ')';
                     }
-                }
-            );
+                }],
 
-            $varRe = '\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*';
-            $varMixRe = '\$[a-zA-Z_\x7f-\xff][^ ]*';
-            $stringRe = '(?<char>[\'"])([^\k<char>]+)\k<char>';
-
-            /**
-             * 支持 loop 语法
-             */
-            $this->insertParser(
-                "#^/loop$|^loop {1,}(?<array>{$varMixRe}) {1,}(?<key>{$varRe}) *(?<val>{$varRe})?#",
-                function ($array, $key, $val) {
-
-                    if (!$array) return "endforeach;";
-
-                    if ($val === null) {
-                        $val = $key;
-                        $key = null;
-                    }
-
-                    return $key ? "foreach({$array} as {$key} => {$val}):" : "foreach({$array} as {$val}):";
-                }
-            );
-
-            /**
-             * 支持 if 语法
-             */
-            $this->insertParser(
-                "#^/if|^if {1,}(?<statement>.+)#",
-                function ($statement) {
-
-                    return $statement ?
-                        "if ({$statement}):" :
-                        "endif;";
-                }
-            );
-
-            /**
-             * 支持 ?= 和 ?== 语法
-             */
-            $this->insertParser(
-                "#^\?(?<mark>={1,2}) *(?<first>{$varMixRe}?) *: *(?<second>{$varMixRe}|{$stringRe})#",
-                function ($mark, $first, $second) {
+                /**
+                 * 支持 ?= 和 ?== 语法
+                 */
+                "ConditionPrint" => ["#^\?(?<mark>={1,2}) *(?<first>{$varMixRe}?) *: *(?<second>{$varMixRe}|{$stringRe})#", function ($mark, $first, $second) {
                     if ($mark === '==') {
-                        return "\$SEXY_TEMPLATE .= ((isset({$first}) && {$first} !== null) ? {$first} : {$second});";
+                        return "\$SEXY_TEMPLATE .= ((isset({$first}) && empty({$first})) ? {$first} : {$second});";
                     } else {
-                        return "\$SEXY_TEMPLATE .= ((isset({$first}) && {$first} !== null) ? htmlspecialchars({$first}) : htmlspecialchars({$second}));";
+                        return "\$SEXY_TEMPLATE .= ((isset({$first}) && empty({$first})) ? htmlspecialchars({$first}) : htmlspecialchars({$second}));";
                     }
+                }],
+
+                /**
+                 * 支持 loop 语法
+                 */
+                "Loop" => ["#^/loop$|^loop {1,}(?<array>{$varMixRe}) {1,}(?<key>{$varRe}) *(?<val>{$varRe})?#", function ($array, $key, $val) {
+                    if (!$array) return "endforeach;";
+                    return $val ? "foreach({$array} as {$key} => {$val}):" : "foreach({$array} as {$key}):";
+                }],
+
+                /**
+                 * 支持 if else elseif 语法
+                 */
+                "If" => ["#^(?<endif>/if)$|^(?<else>else)$|^(?<elseif>else)?if {1,}(?<statement>.+)#", function ($endif, $else, $elseif, $statement) {
+                    if($endif) return 'endif;';
+                    if($else) return 'else:';
+                    if($elseif) return "elseif ({$statement}):";
+                    return "if ({$statement}):";
+                }]
+            ];
+        }
+
+        /**
+         * 魔术方法
+         *
+         * @param string $name
+         * @param array $args
+         * @return bool|void|mixed
+         * @throws TargetSyntaxNotFoundException|\BadMethodCallException
+         */
+        public function __call($name, $args)
+        {
+            if(preg_match('#enable(?<syntaxName>[a-zA-z0-9]+)Syntax#', $name, $matches)) {
+                $syntaxName = $matches['syntaxName'];
+                $syntaxList = self::getSyntaxMap();
+
+                if($syntaxName === "All") {
+                    foreach($syntaxList as $syntax) {
+                        $this->insertParser($syntax[0], $syntax[1]);
+                    }
+                    return;
+                } elseif(isset($syntaxList[$syntaxName])) {
+                    $this->insertParser($syntaxList[$syntaxName][0], $syntaxList[$syntaxName][1]);
+                    return;
+                } else {
+                    throw new TargetSyntaxNotFoundException($syntaxName);
                 }
-            );
+            }
+
+            throw new \BadMethodCallException();
         }
 
         /**
@@ -179,11 +202,7 @@ namespace SexyTemplate
          */
         protected function escapeNormalString($str)
         {
-            return str_replace(
-                ["\"", "\r", "\n"],
-                ["\\\"", "\\r", "\\n"],
-                str_replace('\\', '\\\\', $str)
-            );
+            return str_replace("'", "\\'", str_replace('\\', '\\\\', $str));
         }
 
         /**
@@ -195,7 +214,7 @@ namespace SexyTemplate
         protected function collectString($string)
         {
             if ($string === '') return '';
-            return T_COLLECT_HEAD . "\"" . $this->escapeNormalString($string) . "\"" . T_STATEMENT_END;
+            return T_COLLECT_HEAD . "'" . $this->escapeNormalString($string) . "'" . T_STATEMENT_END;
         }
 
         public function compile($template)
@@ -268,13 +287,6 @@ namespace SexyTemplate
 
         public $templateExt = '.html';
 
-        public function __construct()
-        {
-            parent::__construct();
-
-            $this->init();
-        }
-
         public function init()
         {
             $this->insertParser('#^include +([\'"])(?<file>[^\1]+)\1$#', array($this, 'parseInclude'));
@@ -321,10 +333,10 @@ namespace SexyTemplate
         }
     }
 
-    class FileNotFoundException extends \Exception
-    {
+    class FileNotFoundException extends \Exception {}
 
-    }
+    class TargetSyntaxNotFoundException extends \Exception {}
+
 
     class Wrapper
     {
@@ -361,14 +373,14 @@ namespace SexyTemplate
          * @param array $data
          * @return string
          */
-        public function render(array $data)
+        public function render(array $data = array())
         {
             $func = create_function('$vars, $self', T_FUNCTION_HEAD . $this->_expression . T_FUNCTION_END);
             $refFunc = new \ReflectionFunction($func);
             return $refFunc->invoke($data, $this->_ref);
         }
 
-        public function __invoke(array $data)
+        public function __invoke(array $data = array())
         {
             return $this->render($data);
         }
