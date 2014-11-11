@@ -37,7 +37,7 @@ namespace SexyTemplate
          * 语法分析钩子
          * @var array
          */
-        private $_statementParser = [];
+        protected $_statementParser = [];
 
         /**
          * 是否开启调试模式
@@ -66,22 +66,16 @@ namespace SexyTemplate
                  * 用来支持 == 跟 = 输出/转义输出
                  */
                 "Print" => ['#^(?<mark>={1,2}) *(?<statement>.*)#i', function ($mark, $statement) {
-                    if ($mark === '==') {
-                        return '$SEXY_TEMPLATE .= ' . $statement;
-                    } else {
-                        return '$SEXY_TEMPLATE .= htmlspecialchars(' . $statement . ')';
-                    }
+                    return T_COLLECT_HEAD . ($mark === '==' ? $statement : "htmlspecialchars({$statement})");
                 }],
 
                 /**
                  * 支持 ?= 和 ?== 语法
                  */
                 "ConditionPrint" => ["#^\?(?<mark>={1,2}) *(?<first>{$varMixRe}?) *: *(?<second>{$varMixRe}|{$stringRe})#", function ($mark, $first, $second) {
-                    if ($mark === '==') {
-                        return "\$SEXY_TEMPLATE .= ((isset({$first}) && empty({$first})) ? {$first} : {$second});";
-                    } else {
-                        return "\$SEXY_TEMPLATE .= ((isset({$first}) && empty({$first})) ? htmlspecialchars({$first}) : htmlspecialchars({$second}));";
-                    }
+                    return T_COLLECT_HEAD . " ((isset({$first}) && empty({$first})) ? " . ($mark === "==" 
+                        ? "{$first} : {$second});"
+                        : "htmlspecialchars({$first}) : htmlspecialchars({$second}));");
                 }],
 
                 /**
@@ -337,18 +331,19 @@ namespace SexyTemplate
 
     class TargetSyntaxNotFoundException extends \Exception {}
 
+    class TemplateComplieException extends \Exception {}
 
     class Wrapper
     {
         /**
          * @var \Object
          */
-        private $_ref         = null;
+        protected $_ref         = null;
 
         /**
          * @var string
          */
-        private $_expression = '';
+        protected $_expression = '';
 
         public function __construct($expression)
         {
@@ -375,7 +370,9 @@ namespace SexyTemplate
          */
         public function render(array $data = array())
         {
-            $func = create_function('$vars, $self', T_FUNCTION_HEAD . $this->_expression . T_FUNCTION_END);
+            $func = @create_function('$vars, $self', T_FUNCTION_HEAD . $this->_expression . T_FUNCTION_END);
+            if(!$func) throw new TemplateComplieException();
+
             $refFunc = new \ReflectionFunction($func);
             return $refFunc->invoke($data, $this->_ref);
         }
