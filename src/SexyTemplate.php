@@ -4,22 +4,30 @@
  * a mini php template engine. just like artTemplate(JavaScript).
  *
  * @author qpwoeiru96 <qpwoeiru96@gmail.com>
- * @version 0.0.2
+ * @version 0.0.5
+ */
+ 
+/**
+ * @0.0.3: 支持模板缓存
+ *
+ * @0.0.4：支持Layou布局
+ *
+ * @0.0.5: 支持自定义起始闭合标签
  */
 
 namespace SexyTemplate
 {
-    const VERSION = '0.0.2';
+    const VERSION = '0.0.5';
 
     /**
      * 函数包装头部 用于内部变量支持 以及初始化返回字符串
      */
-    const T_FUNCTION_HEAD = 'extract($vars);unset($vars);$SEXY_TEMPLATE = "";';
+    const T_FUNCTION_HEAD = 'extract($vars);unset($vars);$_ = "";';
 
     /**
      * 函数包装尾部
      */
-    const T_FUNCTION_END = 'return $SEXY_TEMPLATE;';
+    const T_FUNCTION_END = 'return $_;';
 
     /**
      * 语句万能结尾
@@ -27,9 +35,9 @@ namespace SexyTemplate
     const T_STATEMENT_END =  ";";
 
     /**
-     * blabla
+     * 字符串收集
      */
-    const T_COLLECT_HEAD = '$SEXY_TEMPLATE .= ';
+    const T_COLLECT = '$_ .= ';
 
     class Compiler
     {
@@ -39,6 +47,19 @@ namespace SexyTemplate
          */
         protected $_statementParser = [];
 
+        /**
+         * 起始标签
+         *
+         * @var string
+         */
+        public $openTag = '<%';
+
+        /**
+         * 闭合标签
+         *
+         * @var string
+         */
+        public $closeTag = '%>';
         /**
          * 是否开启调试模式
          * @var bool
@@ -50,11 +71,13 @@ namespace SexyTemplate
             $this->init();
         }
 
-        public function init()
-        {
-            
-        }
+        public function init() { }
 
+        /**
+         * 获取语法映射列表
+         *
+         * @return array
+         */
         public static function getSyntaxMap()
         {
             $varRe = '\$[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*';
@@ -66,14 +89,14 @@ namespace SexyTemplate
                  * 用来支持 == 跟 = 输出/转义输出
                  */
                 "Print" => ['#^(?<mark>={1,2}) *(?<statement>.*)#i', function ($mark, $statement) {
-                    return T_COLLECT_HEAD . ($mark === '==' ? $statement : "htmlspecialchars({$statement})");
+                    return T_COLLECT . ($mark === '==' ? $statement : "htmlspecialchars({$statement})");
                 }],
 
                 /**
                  * 支持 ?= 和 ?== 语法
                  */
                 "ConditionPrint" => ["#^\?(?<mark>={1,2}) *(?<first>{$varMixRe}?) *: *(?<second>{$varMixRe}|{$stringRe})#", function ($mark, $first, $second) {
-                    return T_COLLECT_HEAD . " ((isset({$first}) && empty({$first})) ? " . ($mark === "==" 
+                    return T_COLLECT . " ((isset({$first}) && empty({$first})) ? " . ($mark === "=="
                         ? "{$first} : {$second});"
                         : "htmlspecialchars({$first}) : htmlspecialchars({$second}));");
                 }],
@@ -208,55 +231,39 @@ namespace SexyTemplate
         protected function collectString($string)
         {
             if ($string === '') return '';
-            return T_COLLECT_HEAD . "'" . $this->escapeNormalString($string) . "'" . T_STATEMENT_END;
+            return T_COLLECT . "'" . $this->escapeNormalString($string) . "'" . T_STATEMENT_END;
         }
 
+        /**
+         * 编译模板
+         *
+         * @param string $template
+         * @return bool|Wrapper
+         */
         public function compile($template)
         {
+            $templateArr = explode($this->openTag, $template);
 
-            $length = strlen($template);
             $output = [];
-            $inStatement = false;
-            $buffer = '';
-
-            for ($i = 0; $i < $length; $i++) {
-
-                #$lastChar = $i > 0 ? $template{$i-1} : '';
-                $char = $template{$i};
-                $nextChar = $length > $i + 1 ? $template{$i + 1} : '';
-
-                switch ($char) {
-                    case '<':
-                        if ($nextChar == '%' && !$inStatement) {
-                            $output[] = $this->collectString($buffer);
-                            $buffer = '';
-                            $inStatement = true;
-                            $i++;
-                        } else {
-                            $buffer .= $char;
-                        }
-                        break;
-                    case '%':
-                        if ($nextChar == '>' && $inStatement) {
-                            $output[] = $this->parseStatement($buffer);
-                            $buffer = '';
-                            $inStatement = false;
-                            $i++;
-                        } else {
-                            $buffer .= $char;
-                        }
-                        break;
-                    default:
-                        $buffer .= $char;
-                        if ($i == $length - 1) {
-                            if ($inStatement)
-                                $output[] = $this->parseStatement($buffer);
-                            else
-                                $output[] = $this->collectString($buffer);
-                        }
-                        break;
+            foreach($templateArr as $k => $v) {
+                if($k === 0) {
+                    $output[] = $this->collectString($v);
+                    continue;
                 }
 
+                $pos = stripos($v, $this->closeTag);
+                if($pos === false) {
+                    if($v !== '') $output[] = $this->collectString($v);
+                } else {
+                    $statement = substr($v, 0, $pos);
+                    if($statement !== '')
+                        $output[] = $this->parseStatement($statement);
+
+                    $string = substr($v, $pos + 2);
+
+                    if($string !== '')
+                        $output[] = $this->collectString($string);
+                }
             }
 
             $expression = implode("\n", $output);
@@ -277,13 +284,33 @@ namespace SexyTemplate
     class FileCompiler extends Compiler
     {
 
-        public $templateDir = null;
+        /**
+         * 模板文件存放位置
+         *
+         * @var string
+         */
+        public $templateDir;
 
+        /**
+         * 模板文件扩展名
+         *
+         * @var string
+         */
         public $templateExt = '.html';
+
+        /**
+         * 是否使用布局
+         *
+         * @var string
+         */
+        public $layout;
+
+        protected $file;
 
         public function init()
         {
             $this->insertParser('#^include +([\'"])(?<file>[^\1]+)\1$#', array($this, 'parseInclude'));
+            $this->insertParser('#^CONTENT$#', array($this, 'parseLayoutContent'));
         }
 
         /**
@@ -307,14 +334,12 @@ namespace SexyTemplate
             return $this->compile(file_get_contents($filePath));
         }
 
-        /**
-         * 编译文件
-         *
-         * @param string $file 文件名称
-         * @return bool|\SexyTemplate\Wrapper
-         * @throws FileNotFoundException
-         */
-        public function compileFile($file)
+        public function parseLayoutContent()
+        {
+            return $this->_compileFile($this->file);
+        }
+
+        protected function _compileFile($file)
         {
             $filePath = $this->templateDir . DIRECTORY_SEPARATOR . $file . $this->templateExt;
             $filePath = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $filePath);
@@ -325,20 +350,102 @@ namespace SexyTemplate
 
             return $this->compile(file_get_contents($filePath));
         }
+
+        /**
+         * 编译文件
+         *
+         * @param string $file 文件名称
+         * @return bool|\SexyTemplate\Wrapper
+         * @throws FileNotFoundException
+         */
+        public function compileFile($file)
+        {
+            $this->file = $file;
+
+            return $this->layout ? $this->_compileFile($this->layout) : $this->_compileFile($this->file);
+        }
     }
+
+    /**
+     * 缓存接口
+     *
+     * @package SexyTemplate
+     */
+    interface TemplateCacheable
+    {
+        /**
+         * 写入缓存
+         *
+         * @param string $key
+         * @param Wrapper $wrapper
+         * @return void
+         */
+        public function write($key, Wrapper $wrapper);
+
+        /**
+         * 读出缓存
+         *
+         * @param string $key
+         * @return Wrapper|null
+         */
+        public function read($key);
+
+    }
+
+    /**
+     * 缓存编译器 让模板引擎支持缓存 避免重复编译
+     *
+     * @package SexyTemplate
+     */
+    class FileCacheCompiler extends FileCompiler implements TemplateCacheable
+    {
+        /**
+         * 存储缓存的文件夹
+         *
+         * @var string
+         */
+        public $cacheDir;
+
+
+        public function read($key)
+        {
+            $path = $this->cacheDir . DIRECTORY_SEPARATOR . md5($key) . '.php';
+
+            return file_exists($path) ? new Wrapper(file_get_contents($path)) : null;
+        }
+
+        public function write($key, Wrapper $wrapper)
+        {
+            $path = $this->cacheDir . DIRECTORY_SEPARATOR . md5($key) . '.php';
+            return new Wrapper(@file_put_contents($path, (string)$wrapper));
+        }
+
+        public function compileFile($file)
+        {
+            $this->file = $file;
+
+            if(!($wrapper = $this->read($file))) {
+                $wrapper = $this->layout ? $this->_compileFile($this->layout) : $this->_compileFile($this->file);
+                $this->write($file, $wrapper);
+            }
+
+            return $wrapper;
+        }
+    }
+
 
     class FileNotFoundException extends \Exception {}
 
     class TargetSyntaxNotFoundException extends \Exception {}
 
-    class TemplateComplieException extends \Exception {}
+    class TemplateCompileException extends \Exception {}
 
     class Wrapper
     {
         /**
          * @var \Object
          */
-        protected $_ref         = null;
+        protected $_ref;
 
         /**
          * @var string
@@ -367,11 +474,14 @@ namespace SexyTemplate
          *
          * @param array $data
          * @return string
+         * @throws TemplateCompileException
          */
         public function render(array $data = array())
         {
             $func = @create_function('$vars, $self', T_FUNCTION_HEAD . $this->_expression . T_FUNCTION_END);
-            if(!$func) throw new TemplateComplieException();
+
+            if(!$func)
+                throw new TemplateCompileException();
 
             $refFunc = new \ReflectionFunction($func);
             return $refFunc->invoke($data, $this->_ref);

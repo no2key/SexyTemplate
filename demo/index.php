@@ -12,9 +12,11 @@ class Controller
             return $this->compileTemplate($template);
         }
 
-        $st = new SexyTemplate\FileCompiler();
+        $st = new SexyTemplate\FileCacheCompiler();
+        $st->layout = "layout/main";
         $st->enableAllSyntax();
         $st->templateDir = __DIR__ . DIRECTORY_SEPARATOR . 'templates';
+        $st->cacheDir = __DIR__ . DIRECTORY_SEPARATOR . 'cache';
         $st->debug = true;
 
         $wrapper = $st->compileFile('index');
@@ -28,7 +30,7 @@ class Controller
 
     public function compileTemplate($template)
     {
-        $st         = new SexyTemplate\Compiler();
+        $st = new SexyTemplate\Compiler();
         $st->enableAllSyntax();
 
 //        $st->insertParser('#^pc:(?<func>[\w]+)(?<args>.*)#', function ($func, $args) {
