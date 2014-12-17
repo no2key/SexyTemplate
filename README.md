@@ -67,7 +67,7 @@ print $wrapper
     ->render(['content' => 'i am SexyTemplate']);
 ```
 
-支持文件包含以及编译html文件
+支持文件包含以及编译文件
 ----------------
 ```
 <%include "common/header"%>
@@ -85,6 +85,80 @@ $wrapper = $st->compileFile('index');
 print $wrapper
     ->bind($this)
     ->render();
+```
+
+支持布局模式
+------
+
+使用方式：
+
+```
+$st = new SexyTemplate\FileCompiler();
+$st->layout = "layout/main";
+$st->enableAllSyntax();
+$st->templateDir = __DIR__ . DIRECTORY_SEPARATOR . 'templates';
+$st->debug = true;
+
+$wrapper = $st->compileFile('index');
+
+#highlight_string('<?php ' . $wrapper);
+
+print $wrapper
+    ->bind($this)
+    ->render();
+```
+
+布局文件：
+```
+<!DOCTYPE HTML>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title><%=$self->name%></title>
+    <meta name="author" content="qpwoeiru96">
+    <link rel="stylesheet" href="http://cdn.bootcss.com/bootstrap/3.3.0/css/bootstrap.min.css">
+</head>
+<body>
+<%CONTENT%>
+</body>
+<%include 'js'%>
+</html>
+```
+
+内容文件：
+
+```
+<div class="container">
+    blablabla
+</div>
+```
+
+支持编译缓存
+------
+
+```
+$st = new SexyTemplate\FileCacheCompiler();
+$st->layout = "layout/main";
+$st->enableAllSyntax();
+$st->templateDir = __DIR__ . DIRECTORY_SEPARATOR . 'templates';
+$st->cacheDir = __DIR__ . DIRECTORY_SEPARATOR . 'cache';
+$st->debug = true;
+
+$wrapper = $st->compileFile('index');
+
+#highlight_string('<?php ' . $wrapper);
+
+print $wrapper
+    ->bind($this)
+    ->render();
+```
+
+支持自定义起始闭合标签
+-----------
+
+```
+$st->openTag = '<{';
+$st->openTag = '}>';
 ```
 
 其他
