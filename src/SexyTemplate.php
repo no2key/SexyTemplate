@@ -13,11 +13,13 @@
  * @0.0.4：支持Layou布局
  *
  * @0.0.5: 支持自定义起始闭合标签
+ *
+ * @0.0.6: Wrapper 更友好的错误提示
  */
 
 namespace SexyTemplate
 {
-    const VERSION = '0.0.5';
+    const VERSION = '0.0.6';
 
     /**
      * 函数包装头部 用于内部变量支持 以及初始化返回字符串
@@ -277,7 +279,7 @@ namespace SexyTemplate
                 }
             }
 
-            return new Wrapper($expression);
+            return new Wrapper($expression, $this->debug);
         }
     }
 
@@ -411,13 +413,13 @@ namespace SexyTemplate
         {
             $path = $this->cacheDir . DIRECTORY_SEPARATOR . md5($key) . '.php';
 
-            return file_exists($path) ? new Wrapper(file_get_contents($path)) : null;
+            return file_exists($path) ? new Wrapper(file_get_contents($path), $this->debug) : null;
         }
 
         public function write($key, Wrapper $wrapper)
         {
             $path = $this->cacheDir . DIRECTORY_SEPARATOR . md5($key) . '.php';
-            return new Wrapper(@file_put_contents($path, (string)$wrapper));
+            return @file_put_contents($path, (string)$wrapper);
         }
 
         public function compileFile($file)
@@ -452,9 +454,15 @@ namespace SexyTemplate
          */
         protected $_expression = '';
 
-        public function __construct($expression)
+        /**
+         * @var boolean
+         */
+        protected $_debug;
+
+        public function __construct($expression, $debug = false)
         {
             $this->_expression = $expression;
+            $this->_debug = $debug;
         }
 
         /**
@@ -484,7 +492,61 @@ namespace SexyTemplate
                 throw new TemplateCompileException();
 
             $refFunc = new \ReflectionFunction($func);
-            return $refFunc->invoke($data, $this->_ref);
+
+            if($this->_debug) {
+                $expression = $this->_expression;
+                set_error_handler(function($errno, $errstr, $errfile, $errline, $errcontext) use ($expression) {
+
+                    $lines = explode("\n", $expression);
+                    $start = max(0, $errline - 5);
+                    $end = min(count($lines) - 1, $start + 8);
+
+                    $expression = "";
+                    for($i = $start; $i <= $end; $i++) {
+                        $expression .= htmlspecialchars($lines[$i]) . "\n";
+                    }
+
+                    print <<<EOT
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SexyTemplate Error</title>
+<style>/*! normalize.css v3.0.2 | MIT License | git.io/normalize */html{font-family:sans-serif;-ms-text-size-adjust:100%;-webkit-text-size-adjust:100%}body{margin:0}article,aside,details,figcaption,figure,footer,header,hgroup,main,menu,nav,section,summary{display:block}audio,canvas,progress,video{display:inline-block;vertical-align:baseline}audio:not([controls]){display:none;height:0}[hidden],template{display:none}a{background-color:transparent}a:active,a:hover{outline:0}abbr[title]{border-bottom:1px dotted}b,strong{font-weight:bold}dfn{font-style:italic}h1{font-size:2em;margin:.67em 0}mark{background:#ff0;color:#000}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sup{top:-0.5em}sub{bottom:-0.25em}img{border:0}svg:not(:root){overflow:hidden}figure{margin:1em 40px}hr{-moz-box-sizing:content-box;box-sizing:content-box;height:0}pre{overflow:auto}code,kbd,pre,samp{font-family:monospace,monospace;font-size:1em}button,input,optgroup,select,textarea{color:inherit;font:inherit;margin:0}button{overflow:visible}button,select{text-transform:none}button,html input[type="button"],input[type="reset"],input[type="submit"]{-webkit-appearance:button;cursor:pointer}button[disabled],html input[disabled]{cursor:default}button::-moz-focus-inner,input::-moz-focus-inner{border:0;padding:0}input{line-height:normal}input[type="checkbox"],input[type="radio"]{box-sizing:border-box;padding:0}input[type="number"]::-webkit-inner-spin-button,input[type="number"]::-webkit-outer-spin-button{height:auto}input[type="search"]{-webkit-appearance:textfield;-moz-box-sizing:content-box;-webkit-box-sizing:content-box;box-sizing:content-box}input[type="search"]::-webkit-search-cancel-button,input[type="search"]::-webkit-search-decoration{-webkit-appearance:none}fieldset{border:1px solid #c0c0c0;margin:0 2px;padding:.35em .625em .75em}legend{border:0;padding:0}textarea{overflow:auto}optgroup{font-weight:bold}table{border-collapse:collapse;border-spacing:0}td,th{padding:0}
+.prettyprint{background:black;font-family:Menlo,'Bitstream Vera Sans Mono','DejaVu Sans Mono',Monaco,Consolas,monospace;font-size:12px;line-height:1.5;border:1px solid #ccc;padding:10px}.pln{color:white}@media screen{.str{color:#6f0}.kwd{color:#f60}.com{color:#93c}.typ{color:#458}.lit{color:#458}.pun{color:white}.opn{color:white}.clo{color:white}.tag{color:white}.atn{color:#9c9}.atv{color:#6f0}.dec{color:white}.var{color:white}.fun{color:#fc0}}@media print,projection{.str{color:#060}.kwd{color:#006;font-weight:bold}.com{color:#600;font-style:italic}.typ{color:#404;font-weight:bold}.lit{color:#044}.pun,.opn,.clo{color:#440}.tag{color:#006;font-weight:bold}.atn{color:#404}.atv{color:#060}}ol.linenums{margin-top:0;margin-bottom:0;color:white}a{color:gray;text-decoration:none}.container{width:1120px;margin:0 auto}body{font-family:PingHei,'Lucida Grande','Lucida Sans Unicode',Helvetica,Arial,Verdana,sans-serif}
+</style>
+</head>
+<body>
+    <div class="container">
+        <h1>SexyTemplate Error</h1>
+        <p>错误信息: {$errstr}<p>
+        <p>错误位置: 第{$errline}行<p>
+        <div class="code-area">
+            <p>PHP代码:</p>
+            <div class="right-side">
+                <pre class="code-block prettyprint linenums:1 lang-php">{$expression}</pre>
+            </div>
+        </div>
+    </div>
+    <div style="text-align: center; color: gray;">author: <a href="http://blog.sou.la/">qpwoeiru96</a></div>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/prettify/r224/prettify.js"></script>
+    <script>
+    window.onload = prettyPrint;
+    </script>
+</body>
+</html>
+EOT;
+                    exit(-1);
+
+                }, E_ALL);
+
+                $html = $refFunc->invoke($data, $this->_ref);
+                restore_error_handler();
+                return $html;
+
+            } else {
+                return $refFunc->invoke($data, $this->_ref);
+            }
         }
 
         public function __invoke(array $data = array())
